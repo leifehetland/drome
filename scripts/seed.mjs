@@ -24,7 +24,9 @@ const users = [
     password: process.env.MEMBER_PASSWORD || "changeme-member",
     role: "member",
     name: "Demo Member",
-    customerId: null,
+    // Linked to a real customer with rich 2014+ rental history so the demo
+    // "My Rentals" page has data. Override with DEMO_CUSTOMER_ID.
+    customerId: process.env.DEMO_CUSTOMER_ID || "166900",
   },
 ];
 

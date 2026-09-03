@@ -29,14 +29,22 @@ export default async function AccountPage() {
           <Row label="Linked customer ID" value={user?.customerId ?? "—"} />
         </dl>
 
-        {(user?.role === "admin" || user?.role === "staff") && (
+        <div className="mt-8 flex flex-wrap gap-3">
           <Link
-            href="/admin"
-            className="inline-block mt-8 rounded-md bg-white text-black font-medium px-4 py-2 hover:bg-neutral-200"
+            href="/account/rentals"
+            className="inline-block rounded-md bg-white text-black font-medium px-4 py-2 hover:bg-neutral-200"
           >
-            Open admin →
+            My rentals →
           </Link>
-        )}
+          {(user?.role === "admin" || user?.role === "staff") && (
+            <Link
+              href="/admin"
+              className="inline-block rounded-md border border-neutral-700 px-4 py-2 hover:border-neutral-400"
+            >
+              Open admin →
+            </Link>
+          )}
+        </div>
       </div>
     </main>
   );

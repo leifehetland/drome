@@ -58,3 +58,23 @@ export const appUsers = pgTable("app_users", {
 });
 
 export type AppUser = typeof appUsers.$inferSelect;
+
+/**
+ * TMDB enrichment, keyed by the cleaned catalog title. Populated by the batch
+ * script (scripts/tmdb_match.mjs). status: 'ok' | 'nomatch' | 'error'.
+ */
+export const tmdbCache = pgTable("tmdb_cache", {
+  title: text("title").primaryKey(), // cleaned catalog title
+  tmdbId: bigint("tmdb_id", { mode: "number" }),
+  mediaType: text("media_type"),
+  posterPath: text("poster_path"),
+  backdropPath: text("backdrop_path"),
+  overview: text("overview"),
+  releaseYear: bigint("release_year", { mode: "number" }),
+  genres: text("genres"), // comma-separated
+  director: text("director"),
+  topCast: text("top_cast"), // comma-separated
+  voteAverage: doublePrecision("vote_average"),
+  status: text("status").notNull().default("nomatch"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
