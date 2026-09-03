@@ -26,6 +26,12 @@ export default async function AdminPage({
           Signed in as {session?.user?.email} ({session?.user?.role}).
         </p>
 
+        <div className="mb-6">
+          <Link href="/admin/tmdb" className="text-sm rounded-md border border-neutral-700 px-3 py-1.5 hover:border-neutral-400">
+            TMDB coverage →
+          </Link>
+        </div>
+
         <h2 className="text-lg font-medium mb-3">Customer lookup</h2>
         <form action="/admin" className="mb-6">
           <input

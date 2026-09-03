@@ -44,7 +44,7 @@ async function tmdb(path) {
 // Normalize a catalog title into a searchable show/movie name: reorder a trailing
 // article and strip season/disc/volume/part/edition suffixes.
 function normalizeTitle(title) {
-  let s = title.trim();
+  let s = title.trim().replace(/^AVAIL?(?:[\s\p{P}]+|$)/iu, "").trim() || title.trim();
   const m = s.match(/^(.*),\s*(THE|A|AN)\b(.*)$/i); // "SINNER, THE 1.1" -> "THE SINNER 1.1"
   if (m) s = `${m[2]} ${m[1]}${m[3]}`.replace(/\s{2,}/g, " ").trim();
   s = s
@@ -73,8 +73,8 @@ async function ensureTable() {
     )`;
 }
 
-// Same cleaned-title expression the app groups/joins on.
-const CLEAN = sql`btrim(regexp_replace(item_title, '^AVAIL[[:space:]]+', '', 'i'))`;
+// Same cleaned-title expression the app groups/joins on (keep in sync with queries.ts).
+const CLEAN = sql`btrim(regexp_replace(item_title, '^AVAIL?([[:space:][:punct:]]+|$)', '', 'i'))`;
 
 async function titlesToProcess() {
   // Default: skip every title already attempted. --retry: only skip successful ones.
@@ -82,19 +82,53 @@ async function titlesToProcess() {
   const rows = await sql`
     SELECT DISTINCT ${CLEAN} AS title
     FROM inventor
-    WHERE upper(btrim(item_title)) <> 'AVAIL'
-      AND ${CLEAN} <> '' AND ${CLEAN} !~ '^\\('
+    WHERE ${CLEAN} <> '' AND ${CLEAN} !~ '^\\('
       AND ${CLEAN} NOT IN (SELECT title FROM tmdb_cache WHERE ${alreadyDone})
     ORDER BY title
     ${LIMIT ? sql`LIMIT ${LIMIT}` : sql``}`;
   return rows.map((r) => r.title);
 }
 
+// Remove edition/qualifier tags and parentheticals that block a match.
+function stripQualifiers(s) {
+  return s
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\s*\([^)]*$/, " ") // unclosed trailing "(...", e.g. "(MINI-SERIE"
+    .replace(
+      /\b(CRITERION|COLLECTION|COLL|SPEC(?:IAL)?\s?ED(?:ITION)?|S\.E\.?|UNRATED|UNCUT|REMASTER(?:ED)?|ANNIVERSARY|DELUXE|LIMITED|EXTENDED(?:\s+CUT)?|DIRECTOR'?S?\s+CUT|BOX\s?SET|TRILOGY|COMPLETE)\b.*$/i,
+      ""
+    )
+    .replace(/[-:]\s*$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// Ordered query variants, most specific first.
+function candidateQueries(title) {
+  const out = [];
+  const push = (s) => {
+    const v = (s || "").replace(/\s{2,}/g, " ").trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  const base = normalizeTitle(title);
+  push(stripQualifiers(base));
+  push(base);
+  if (title.includes("/")) push(stripQualifiers(normalizeTitle(title.split("/")[0]))); // double feature
+  const aka = title.split(/\s+aka\s+/i);
+  if (aka.length > 1) { push(stripQualifiers(normalizeTitle(aka[0]))); push(stripQualifiers(normalizeTitle(aka[1]))); }
+  const c = stripQualifiers(base);
+  if (c.includes(":")) push(c.split(":")[0]);
+  return out;
+}
+
 async function match(title) {
-  const q = normalizeTitle(title);
-  // /search/multi covers movies AND TV shows (most no-matches were TV series discs).
-  const search = await tmdb(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false`);
-  const hit = (search.results || []).find((r) => r.media_type === "movie" || r.media_type === "tv");
+  // /search/multi covers movies AND TV; try each query variant until one hits.
+  let hit = null;
+  for (const q of candidateQueries(title)) {
+    const search = await tmdb(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false`);
+    hit = (search.results || []).find((r) => r.media_type === "movie" || r.media_type === "tv");
+    if (hit) break;
+  }
   if (!hit) return { status: "nomatch" };
 
   const isTv = hit.media_type === "tv";

@@ -5,8 +5,11 @@ import {
   getCategories,
   getFormats,
   getRatings,
+  getGenres,
+  getDecades,
   getFilmsByCategory,
   type FilmFilters,
+  type FilmSort,
 } from "@/db/queries";
 import { FilmCardGrid, FilmCardRow, FilmCarousel } from "@/components/FilmCard";
 
@@ -16,13 +19,22 @@ const PAGE_SIZE = 48;
 const LANDING_ROWS = 8;
 
 type SP = {
-  q?: string;
-  category?: string;
-  format?: string;
-  rating?: string;
-  view?: string;
-  page?: string;
+  q?: string; category?: string; format?: string; rating?: string;
+  genre?: string; decade?: string; director?: string; sort?: string;
+  view?: string; page?: string;
 };
+
+function filtersFrom(sp: SP): FilmFilters {
+  return {
+    q: sp.q, category: sp.category, format: sp.format, rating: sp.rating,
+    genre: sp.genre, decade: sp.decade, director: sp.director,
+    sort: (["title", "year", "rating"].includes(sp.sort ?? "") ? sp.sort : "title") as FilmSort,
+  };
+}
+
+function hasAnyFilter(sp: SP) {
+  return Boolean(sp.q || sp.category || sp.format || sp.rating || sp.genre || sp.decade || sp.director);
+}
 
 function qs(params: Record<string, string | number | undefined>) {
   const p = new URLSearchParams();
@@ -37,13 +49,11 @@ export default async function FilmsPage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const view = sp.view === "list" ? "list" : "grid";
   const page = Math.max(Number(sp.page) || 1, 1);
-  const filters: FilmFilters = {
-    q: sp.q, category: sp.category, format: sp.format, rating: sp.rating,
-  };
-  const hasFilters = Boolean(sp.q || sp.category || sp.format || sp.rating);
+  const filters = filtersFrom(sp);
+  const showResults = hasAnyFilter(sp) || Boolean(sp.sort);
 
-  const [categories, formats, ratings] = await Promise.all([
-    getCategories(), getFormats(), getRatings(),
+  const [categories, formats, ratings, genres, decades] = await Promise.all([
+    getCategories(), getFormats(), getRatings(), getGenres(), getDecades(),
   ]);
 
   return (
@@ -54,58 +64,56 @@ export default async function FilmsPage({ searchParams }: { searchParams: Promis
           <Link href="/" className="text-sm text-neutral-400 hover:text-white">← Home</Link>
         </div>
 
-        {/* Filter bar (native GET form; works without JS) */}
-        <form action="/films" className="grid grid-cols-1 sm:grid-cols-5 gap-2 mb-8">
+        <form action="/films" className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-8">
           <input type="hidden" name="view" value={view} />
-          <input
-            name="q" defaultValue={sp.q ?? ""} placeholder="Search title…"
-            className="sm:col-span-2 rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 outline-none focus:border-neutral-400"
-          />
-          <select name="category" defaultValue={sp.category ?? ""}
-            className="rounded-md bg-neutral-900 border border-neutral-700 px-2 py-2">
-            <option value="">Director / genre</option>
-            {categories.map((c) => (
-              <option key={c.code} value={c.code}>{c.label} ({c.count})</option>
-            ))}
-          </select>
-          <select name="format" defaultValue={sp.format ?? ""}
-            className="rounded-md bg-neutral-900 border border-neutral-700 px-2 py-2">
-            <option value="">Format</option>
-            {formats.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-          <div className="flex gap-2">
-            <select name="rating" defaultValue={sp.rating ?? ""}
-              className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-2">
-              <option value="">Rating</option>
-              {ratings.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-            <button className="rounded-md bg-white text-black font-medium px-4 py-2 hover:bg-neutral-200">
-              Search
-            </button>
+          <input name="q" defaultValue={sp.q ?? ""} placeholder="Search title, cast, plot…"
+            className="col-span-2 rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 outline-none focus:border-neutral-400" />
+          <input name="director" defaultValue={sp.director ?? ""} placeholder="Director…"
+            className="rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 outline-none focus:border-neutral-400" />
+          <Select name="sort" value={sp.sort} placeholder="Sort: Title A–Z"
+            options={[["title", "Title A–Z"], ["year", "Year ↓"], ["rating", "Rating ↓"]]} />
+          <Select name="genre" value={sp.genre} placeholder="Genre"
+            options={genres.map((g) => [g, g])} />
+          <Select name="decade" value={sp.decade} placeholder="Decade"
+            options={decades.map((d) => [String(d), `${d}s`])} />
+          <Select name="category" value={sp.category} placeholder="Section"
+            options={categories.map((c) => [c.code, `${c.label} (${c.count})`])} />
+          <Select name="format" value={sp.format} placeholder="Format"
+            options={formats.map((f) => [f, f])} />
+          <Select name="rating" value={sp.rating} placeholder="Rating"
+            options={ratings.map((r) => [r, r])} />
+          <div className="col-span-2 sm:col-span-4 flex gap-2">
+            <button className="rounded-md bg-white text-black font-medium px-4 py-2 hover:bg-neutral-200">Apply</button>
+            <Link href="/films" className="rounded-md border border-neutral-700 px-4 py-2 text-sm hover:border-neutral-400">Clear</Link>
           </div>
         </form>
 
-        {hasFilters ? (
+        {showResults ? (
           <Results filters={filters} view={view} page={page} sp={sp} />
         ) : (
           <>
-            <div className="flex justify-end mb-4">
-              <ViewToggle sp={sp} view={view} />
-            </div>
+            <div className="flex justify-end mb-4"><ViewToggle sp={sp} view={view} /></div>
             {await Promise.all(
-              categories.slice(0, LANDING_ROWS).map(async (c) => {
-                const films = await getFilmsByCategory(c.code, 20);
-                return <FilmCarousel key={c.code} title={c.label} films={films} />;
-              })
+              categories.slice(0, LANDING_ROWS).map(async (c) => (
+                <FilmCarousel key={c.code} title={c.label} films={await getFilmsByCategory(c.code, 20)} />
+              ))
             )}
-            <p className="text-sm text-neutral-500">
-              Use search or a filter above to browse all {" "}
-              <Link href={qs({ view })} className="underline">titles</Link>.
-            </p>
           </>
         )}
       </div>
     </main>
+  );
+}
+
+function Select({
+  name, value, placeholder, options,
+}: { name: string; value?: string; placeholder: string; options: [string, string][] }) {
+  return (
+    <select name={name} defaultValue={value ?? ""}
+      className="rounded-md bg-neutral-900 border border-neutral-700 px-2 py-2 text-sm">
+      <option value="">{placeholder}</option>
+      {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+    </select>
   );
 }
 
@@ -122,9 +130,7 @@ async function Results({
   return (
     <>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-neutral-500">
-          {total.toLocaleString()} titles · page {page} of {pages}
-        </p>
+        <p className="text-sm text-neutral-500">{total.toLocaleString()} titles · page {page} of {pages}</p>
         <ViewToggle sp={sp} view={view} />
       </div>
 
@@ -135,9 +141,7 @@ async function Results({
           {films.map((f) => <FilmCardGrid key={f.title} film={f} />)}
         </div>
       ) : (
-        <div className="space-y-2">
-          {films.map((f) => <FilmCardRow key={f.title} film={f} />)}
-        </div>
+        <div className="space-y-2">{films.map((f) => <FilmCardRow key={f.title} film={f} />)}</div>
       )}
 
       {pages > 1 && (
@@ -151,31 +155,28 @@ async function Results({
   );
 }
 
+function base(sp: SP) {
+  return {
+    q: sp.q, category: sp.category, format: sp.format, rating: sp.rating,
+    genre: sp.genre, decade: sp.decade, director: sp.director, sort: sp.sort,
+  };
+}
+
 function ViewToggle({ sp, view }: { sp: SP; view: "grid" | "list" }) {
-  const base = { q: sp.q, category: sp.category, format: sp.format, rating: sp.rating, page: sp.page };
+  const b = { ...base(sp), page: sp.page };
   return (
     <div className="inline-flex rounded-md border border-neutral-700 overflow-hidden text-sm">
-      <Link href={qs({ ...base, view: "grid" })}
-        className={`px-3 py-1 ${view === "grid" ? "bg-white text-black" : "text-neutral-300"}`}>
-        Grid
-      </Link>
-      <Link href={qs({ ...base, view: "list" })}
-        className={`px-3 py-1 ${view === "list" ? "bg-white text-black" : "text-neutral-300"}`}>
-        List
-      </Link>
+      <Link href={qs({ ...b, view: "grid" })} className={`px-3 py-1 ${view === "grid" ? "bg-white text-black" : "text-neutral-300"}`}>Grid</Link>
+      <Link href={qs({ ...b, view: "list" })} className={`px-3 py-1 ${view === "list" ? "bg-white text-black" : "text-neutral-300"}`}>List</Link>
     </div>
   );
 }
 
-function PageLink({
-  sp, page, disabled, children,
-}: { sp: SP; page: number; disabled: boolean; children: React.ReactNode }) {
+function PageLink({ sp, page, disabled, children }: { sp: SP; page: number; disabled: boolean; children: React.ReactNode }) {
   if (disabled) return <span className="text-sm text-neutral-700">{children}</span>;
   return (
-    <Link
-      href={qs({ q: sp.q, category: sp.category, format: sp.format, rating: sp.rating, view: sp.view, page })}
-      className="text-sm rounded-md border border-neutral-700 px-3 py-1 hover:border-neutral-400"
-    >
+    <Link href={qs({ ...base(sp), view: sp.view, page })}
+      className="text-sm rounded-md border border-neutral-700 px-3 py-1 hover:border-neutral-400">
       {children}
     </Link>
   );

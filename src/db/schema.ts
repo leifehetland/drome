@@ -75,6 +75,7 @@ export const tmdbCache = pgTable("tmdb_cache", {
   director: text("director"),
   topCast: text("top_cast"), // comma-separated
   voteAverage: doublePrecision("vote_average"),
+  extraTmdbIds: text("extra_tmdb_ids"), // comma-separated ids for twin-packs/double features
   status: text("status").notNull().default("nomatch"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

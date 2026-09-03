@@ -5,11 +5,17 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  const sortParam = searchParams.get("sort");
   const filters = {
     q: searchParams.get("q") ?? undefined,
     category: searchParams.get("category") ?? undefined,
     format: searchParams.get("format") ?? undefined,
     rating: searchParams.get("rating") ?? undefined,
+    genre: searchParams.get("genre") ?? undefined,
+    decade: searchParams.get("decade") ?? undefined,
+    director: searchParams.get("director") ?? undefined,
+    sort: (["title", "year", "rating"].includes(sortParam ?? "") ? sortParam : undefined) as
+      | "title" | "year" | "rating" | undefined,
     limit: Number(searchParams.get("limit")) || 48,
     offset: Number(searchParams.get("offset")) || 0,
   };

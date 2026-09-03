@@ -1,20 +1,23 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getFilmDetail, posterUrl } from "@/db/queries";
+import { getFilmDetail, getFilmDetailById, posterUrl, letterboxdUrl } from "@/db/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function FilmDetailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ t?: string }>;
+  searchParams: Promise<{ t?: string; id?: string }>;
 }) {
-  const { t } = await searchParams;
-  if (!t) notFound();
-  const film = await getFilmDetail(t);
+  const { t, id } = await searchParams;
+  const film = id ? await getFilmDetailById(Number(id)) : t ? await getFilmDetail(t) : null;
   if (!film) notFound();
 
   const poster = posterUrl(film.poster_path, "w500");
+  const letterboxd = letterboxdUrl(film.tmdb_id, film.media_type);
+  const tmdb = film.tmdb_id
+    ? `https://www.themoviedb.org/${film.media_type === "tv" ? "tv" : "movie"}/${film.tmdb_id}`
+    : null;
 
   return (
     <main className="min-h-screen bg-black text-white px-4 sm:px-6 py-8">
@@ -54,11 +57,42 @@ export default async function FilmDetailPage({
               </p>
             )}
 
+            {(letterboxd || tmdb) && (
+              <div className="mt-5 flex flex-wrap gap-2">
+                {letterboxd && (
+                  <a href={letterboxd} target="_blank" rel="noopener noreferrer"
+                    className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm hover:border-neutral-400">
+                    View on Letterboxd ↗
+                  </a>
+                )}
+                {tmdb && (
+                  <a href={tmdb} target="_blank" rel="noopener noreferrer"
+                    className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm hover:border-neutral-400">
+                    View on TMDB ↗
+                  </a>
+                )}
+              </div>
+            )}
+
+            {film.extra_tmdb_ids && (
+              <p className="mt-4 text-sm text-neutral-400">
+                <span className="text-neutral-500">Also on this disc: </span>
+                {film.extra_tmdb_ids.split(",").map((x) => x.trim()).filter(Boolean).map((x, i, arr) => (
+                  <span key={x}>
+                    <a href={`https://www.themoviedb.org/movie/${x}`} target="_blank" rel="noopener noreferrer"
+                      className="text-sky-400 hover:underline">TMDB #{x}</a>
+                    {i < arr.length - 1 ? ", " : ""}
+                  </span>
+                ))}
+              </p>
+            )}
+
             <div className="mt-6 border-t border-neutral-800 pt-4 text-sm space-y-1">
               <Row label="Copies in catalog" value={String(Math.round(film.total_copies))} />
               <Row label="Formats" value={film.formats ?? "—"} />
               <Row label="Type" value={film.item_types ?? "—"} />
               <Row label="Shelf location" value={film.locations ?? "—"} />
+              {film.variants > 1 && <Row label="Editions / discs" value={film.edition_titles ?? String(film.variants)} />}
             </div>
           </div>
         </div>

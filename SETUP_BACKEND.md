@@ -24,7 +24,15 @@ psql "$DATABASE_URL" -f ../db_test/add_clarion_date_columns_core.sql  # core dat
 
 # 2. auth table
 psql "$DATABASE_URL" -f ../db_test/app_users.sql
+
+# 3. catalog enhancements
+psql "$DATABASE_URL" -f ../db_test/tmdb_cache.sql          # TMDB enrichment cache
+psql "$DATABASE_URL" -f ../db_test/tmdb_extra_ids.sql      # compilation extra ids
+psql "$DATABASE_URL" -f ../db_test/enable_fuzzy_search.sql # pg_trgm + trigram indexes
 ```
+
+Fuzzy search degrades gracefully: if `enable_fuzzy_search.sql` hasn't been run, search
+falls back to substring matching automatically (no crash).
 
 The trimmed `history_recent.sql` recreates `cas_hist`/`cus_hist` with only 2014-2020
 rows (plus its own date columns), so the whole database fits a free tier with room to
@@ -66,8 +74,8 @@ Seed passwords default to `changeme-admin` / `changeme-member` — override with
 
 | route | access | what |
 |---|---|---|
-| `/films` | public | catalog browse: category-row landing, grid/list toggle, search by title/director-genre/format/rating, pagination, TMDB posters |
-| `/films/detail?t=` | public | film detail: poster, overview, genres, cast + store copies/formats/location |
+| `/films` | public | catalog browse: category-row landing, grid/list toggle, fuzzy search (title/cast/plot), facets (genre/decade/director/format/rating/section), sort, pagination, TMDB posters; multi-disc sets collapse into one card |
+| `/films/detail?id=` / `?t=` | public | film detail: poster, overview, genres, cast, Letterboxd/TMDB links, editions, store copies/formats/location |
 | `/api/films?q=&category=&format=&rating=&limit=&offset=` | public | JSON catalog search with total count |
 | `/login` | public | credentials sign-in |
 | `/account` | signed-in | profile + role |

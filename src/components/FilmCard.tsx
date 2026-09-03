@@ -2,8 +2,10 @@ import Link from "next/link";
 import type { FilmRow } from "@/db/queries";
 import { posterUrl } from "@/db/queries";
 
-function href(title: string) {
-  return `/films/detail?t=${encodeURIComponent(title)}`;
+function href(film: FilmRow) {
+  return film.tmdb_id
+    ? `/films/detail?id=${film.tmdb_id}`
+    : `/films/detail?t=${encodeURIComponent(film.title)}`;
 }
 
 function Poster({ film, className }: { film: FilmRow; className?: string }) {
@@ -24,11 +26,18 @@ function Poster({ film, className }: { film: FilmRow; className?: string }) {
 /** Grid (poster) card. */
 export function FilmCardGrid({ film }: { film: FilmRow }) {
   return (
-    <Link href={href(film.title)} className="group block">
-      <Poster
-        film={film}
-        className="w-full aspect-[2/3] object-cover rounded-lg group-hover:opacity-80 transition"
-      />
+    <Link href={href(film)} className="group block">
+      <div className="relative">
+        <Poster
+          film={film}
+          className="w-full aspect-[2/3] object-cover rounded-lg group-hover:opacity-80 transition"
+        />
+        {film.variants > 1 && (
+          <span className="absolute top-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] text-neutral-200">
+            {film.variants} eds
+          </span>
+        )}
+      </div>
       <div className="mt-2">
         <p className="text-sm font-medium leading-tight line-clamp-2">{film.title}</p>
         <p className="text-xs text-neutral-500">
@@ -43,7 +52,7 @@ export function FilmCardGrid({ film }: { film: FilmRow }) {
 export function FilmCardRow({ film }: { film: FilmRow }) {
   return (
     <Link
-      href={href(film.title)}
+      href={href(film)}
       className="flex gap-3 items-center rounded-lg border border-neutral-800 bg-neutral-950 p-2 hover:border-neutral-600 transition"
     >
       <Poster film={film} className="w-10 h-15 object-cover rounded shrink-0" />
