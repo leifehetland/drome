@@ -24,7 +24,7 @@ export default function Nav() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center space-x-6">
-            <a href="#" className="text-md hover:text-yellow-500 transition">
+            <a href="/films" className="text-md hover:text-yellow-500 transition">
               Browse
             </a>
             <a href="#" className="text-md hover:text-yellow-500 transition">
@@ -42,10 +42,13 @@ export default function Nav() {
             <a href="#" className="text-md hover:text-yellow-500 transition">
               My Rentals
             </a>
-            <button className="flex items-center space-x-2 bg-yellow-500 text-black px-4 py-2 rounded-lg text-md font-medium hover:bg-yellow-400 transition">
+            <a
+              href="/account"
+              className="flex items-center space-x-2 bg-yellow-500 text-black px-4 py-2 rounded-lg text-md font-medium hover:bg-yellow-400 transition"
+            >
               <User className="w-4 h-4" />
               <span>Account</span>
-            </button>
+            </a>
           </nav>
 
           {/* Mobile Menu Button */}
@@ -65,7 +68,7 @@ export default function Nav() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 space-y-3 border-t border-neutral-800">
             <a
-              href="#"
+              href="/films"
               className="block text-md hover:text-yellow-500 transition"
             >
               Browse
@@ -94,10 +97,13 @@ export default function Nav() {
             >
               My Rentals
             </a>
-            <button className="w-full flex items-center justify-center space-x-2 bg-yellow-500 text-black px-4 py-2 rounded-lg text-sm font-medium">
+            <a
+              href="/account"
+              className="w-full flex items-center justify-center space-x-2 bg-yellow-500 text-black px-4 py-2 rounded-lg text-sm font-medium"
+            >
               <User className="w-4 h-4" />
               <span>Account</span>
-            </button>
+            </a>
           </div>
         )}
       </div>

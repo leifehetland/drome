@@ -289,7 +289,7 @@ const VideoDromeUI = () => {
 
       {/* Results */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-6 md:gap-4">
           <p className="text-neutral-400 text-sm">
             {filteredFilms.length}{" "}
             {filteredFilms.length === 1 ? "film" : "films"} found
@@ -297,12 +297,12 @@ const VideoDromeUI = () => {
         </div>
 
         {/* Film Grid (flex-wrap replacement for grid) */}
-        <div className="flex flex-wrap gap-4 md:gap-6">
+        <div className="flex flex-wrap gap-2 md:gap-2 justify-center">
           {filteredFilms.map((film) => (
             <div
               key={film.id}
               onClick={() => setSelectedFilm(film)}
-              className="group cursor-pointer w-1/2 sm:w-1/3 md:w-1/4 lg:w-1/5"
+              className="group cursor-pointer w-4/5 sm:w-1/3 md:w-1/4 lg:w-1/5 gap-4 p-2"
             >
               <div className="relative aspect-[2/3] bg-neutral-800 rounded-lg overflow-hidden mb-3 shadow-lg">
                 <img
@@ -318,16 +318,16 @@ const VideoDromeUI = () => {
                   </div>
                 )}
                 {film.availableCopies > 0 && (
-                  <div className="absolute top-2 right-2 bg-green-600 text-white px-2 py-1 rounded-md text-xs font-bold">
+                  <div className="absolute top-2 right-2 bg-green-600 text-white px-2 py-1 rounded-md text-sm font-bold">
                     {film.availableCopies} left
                   </div>
                 )}
               </div>
-              <h3 className="font-semibold text-sm mb-1 group-hover:text-yellow-500 transition line-clamp-2">
+              <h3 className="font-semibold text-xl mb-1 group-hover:text-yellow-500 transition line-clamp-2">
                 {film.title}
               </h3>
-              <p className="text-xs text-neutral-400">{film.director}</p>
-              <p className="text-xs text-neutral-500">{film.year}</p>
+              <p className="text-lg text-neutral-300">{film.director}</p>
+              <p className="text-lg text-neutral-300">{film.year}</p>
             </div>
           ))}
         </div>
