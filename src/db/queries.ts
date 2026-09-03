@@ -25,7 +25,7 @@ export async function getFilms(opts: { q?: string; limit?: number; offset?: numb
            sum(GREATEST(coalesce(quantity, 0), 0)) AS total_copies,
            count(*)                             AS lines
     FROM inventor
-    WHERE coalesce(inactive, '') NOT IN ('Y', '1')
+    WHERE coalesce(inactive, 0) = 0
       AND item_title IS NOT NULL AND item_title <> ''
       ${like ? sql`AND item_title ILIKE ${like}` : sql``}
     GROUP BY item_title
@@ -44,6 +44,41 @@ export type CustomerRow = {
   home_phone: string | null;
   status: string | null;
 };
+
+export type RentalHistoryRow = {
+  rentid: string;
+  title: string | null;
+  item_type: string | null;
+  rented: string | null; // date
+  returned: string | null; // date
+  price: number | null;
+};
+
+/**
+ * A member's rental history (recent first), joined to inventory titles.
+ * Reads the cus_hist slice; returns [] if the history table isn't loaded.
+ */
+export async function getCustomerRentals(customerId: string, limit = 100) {
+  try {
+    const result = await db.execute<RentalHistoryRow>(sql`
+      SELECT h.rentid,
+             i.item_title AS title,
+             h.item_type,
+             h.date_rented_dt  AS rented,
+             h.date_returnd_dt AS returned,
+             h.price
+      FROM cus_hist h
+      LEFT JOIN inventor i ON i.item_no = h.rentid
+      WHERE h.cust_id = ${customerId}
+      ORDER BY h.date_rented DESC NULLS LAST
+      LIMIT ${Math.min(limit, 500)}
+    `);
+    return result as unknown as RentalHistoryRow[];
+  } catch {
+    // history slice not loaded (e.g. core-only deploy)
+    return [];
+  }
+}
 
 /** Admin: search the migrated customer list. */
 export async function searchCustomers(q: string, limit = 50) {

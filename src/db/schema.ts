@@ -25,7 +25,7 @@ export const inventor = pgTable("inventor", {
   salePrice: doublePrecision("sale_price"),
   studio: text("studio"),
   barcode: text("barcode"),
-  inactive: text("inactive"),
+  inactive: bigint("inactive", { mode: "number" }), // Clarion BYTE: 0/NULL = active
 });
 
 export const customer = pgTable("customer", {
