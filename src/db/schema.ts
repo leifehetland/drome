@@ -64,7 +64,8 @@ export type AppUser = typeof appUsers.$inferSelect;
  * script (scripts/tmdb_match.mjs). status: 'ok' | 'nomatch' | 'error'.
  */
 export const tmdbCache = pgTable("tmdb_cache", {
-  title: text("title").primaryKey(), // cleaned catalog title
+  title: text("title").primaryKey(), // cleaned catalog title (store side)
+  tmdbTitle: text("tmdb_title"), // canonical TMDB title/name (display)
   tmdbId: bigint("tmdb_id", { mode: "number" }),
   mediaType: text("media_type"),
   posterPath: text("poster_path"),

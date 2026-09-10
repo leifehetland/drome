@@ -7,10 +7,14 @@ export const dynamic = "force-dynamic";
 export default async function FilmDetailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ t?: string; id?: string }>;
+  searchParams: Promise<{ t?: string; id?: string; mt?: string }>;
 }) {
-  const { t, id } = await searchParams;
-  const film = id ? await getFilmDetailById(Number(id)) : t ? await getFilmDetail(t) : null;
+  const { t, id, mt } = await searchParams;
+  const film = id
+    ? await getFilmDetailById(Number(id), mt === "tv" ? "tv" : "movie")
+    : t
+      ? await getFilmDetail(t)
+      : null;
   if (!film) notFound();
 
   const poster = posterUrl(film.poster_path, "w500");

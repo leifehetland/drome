@@ -18,6 +18,7 @@ if (!DB) { console.error("DATABASE_URL required"); process.exit(1); }
 if (!TOKEN && !APIKEY) { console.error("TMDB_READ_TOKEN or TMDB_API_KEY required"); process.exit(1); }
 
 const RETRY = process.argv.includes("--retry");
+const BACKFILL_TITLES = process.argv.includes("--backfill-titles");
 const LIMIT = Number((process.argv.find((a) => a.startsWith("--limit=")) || "").split("=")[1]) || 0;
 
 const sql = postgres(DB, { prepare: false });
@@ -66,11 +67,35 @@ function normalizeTitle(title) {
 async function ensureTable() {
   await sql`
     CREATE TABLE IF NOT EXISTS tmdb_cache (
-      title text PRIMARY KEY, tmdb_id bigint, media_type text, poster_path text,
+      title text PRIMARY KEY, tmdb_title text, tmdb_id bigint, media_type text, poster_path text,
       backdrop_path text, overview text, release_year bigint, genres text,
-      director text, top_cast text, vote_average double precision,
+      director text, top_cast text, vote_average double precision, extra_tmdb_ids text,
       status text NOT NULL DEFAULT 'nomatch', updated_at timestamptz NOT NULL DEFAULT now()
     )`;
+  await sql`ALTER TABLE tmdb_cache ADD COLUMN IF NOT EXISTS tmdb_title text`;
+}
+
+// Backfill canonical titles for already-matched rows that predate the tmdb_title column.
+async function backfillTitles() {
+  const rows = await sql`
+    SELECT title, tmdb_id, coalesce(media_type, 'movie') AS media_type
+    FROM tmdb_cache WHERE status = 'ok' AND tmdb_id IS NOT NULL AND tmdb_title IS NULL`;
+  console.log(`${rows.length} matched rows missing a canonical title.`);
+  let done = 0, err = 0;
+  for (const r of rows) {
+    try {
+      const d = await tmdb(`/${r.media_type === "tv" ? "tv" : "movie"}/${r.tmdb_id}`);
+      const name = d.title || d.name || null;
+      await sql`UPDATE tmdb_cache SET tmdb_title = ${name} WHERE title = ${r.title}`;
+      done++;
+    } catch (e) {
+      err++;
+      console.error(`  error on "${r.title}" (${r.tmdb_id}): ${e.message}`);
+    }
+    if ((done + err) % 200 === 0) console.log(`  ${done + err}/${rows.length}`);
+    await sleep(40);
+  }
+  console.log(`\nBackfill done. updated=${done} error=${err}`);
 }
 
 // Same cleaned-title expression the app groups/joins on (keep in sync with queries.ts).
@@ -132,6 +157,7 @@ async function match(title) {
   if (!hit) return { status: "nomatch" };
 
   const isTv = hit.media_type === "tv";
+  const name = (isTv ? hit.name : hit.title) || null;
   const date = isTv ? hit.first_air_date : hit.release_date;
   let director = null, cast = null, genres = null;
   try {
@@ -146,6 +172,7 @@ async function match(title) {
   return {
     status: "ok",
     tmdb_id: hit.id,
+    tmdb_title: name,
     media_type: hit.media_type,
     poster_path: hit.poster_path,
     backdrop_path: hit.backdrop_path,
@@ -160,6 +187,11 @@ async function match(title) {
 
 (async () => {
   await ensureTable();
+  if (BACKFILL_TITLES) {
+    await backfillTitles();
+    await sql.end();
+    return;
+  }
   const titles = await titlesToProcess();
   console.log(`${titles.length} titles to match${RETRY ? " (incl. retries)" : ""}.`);
   let ok = 0, none = 0, err = 0;
@@ -168,17 +200,17 @@ async function match(title) {
     try {
       const r = await match(title);
       await sql`
-        INSERT INTO tmdb_cache (title, tmdb_id, media_type, poster_path, backdrop_path,
+        INSERT INTO tmdb_cache (title, tmdb_title, tmdb_id, media_type, poster_path, backdrop_path,
           overview, release_year, genres, director, top_cast, vote_average, status, updated_at)
-        VALUES (${title}, ${r.tmdb_id ?? null}, ${r.media_type ?? null}, ${r.poster_path ?? null},
+        VALUES (${title}, ${r.tmdb_title ?? null}, ${r.tmdb_id ?? null}, ${r.media_type ?? null}, ${r.poster_path ?? null},
           ${r.backdrop_path ?? null}, ${r.overview ?? null}, ${r.release_year ?? null},
           ${r.genres ?? null}, ${r.director ?? null}, ${r.top_cast ?? null},
           ${r.vote_average ?? null}, ${r.status}, now())
         ON CONFLICT (title) DO UPDATE SET
-          tmdb_id=EXCLUDED.tmdb_id, media_type=EXCLUDED.media_type, poster_path=EXCLUDED.poster_path,
-          backdrop_path=EXCLUDED.backdrop_path, overview=EXCLUDED.overview, release_year=EXCLUDED.release_year,
-          genres=EXCLUDED.genres, director=EXCLUDED.director, top_cast=EXCLUDED.top_cast,
-          vote_average=EXCLUDED.vote_average, status=EXCLUDED.status, updated_at=now()`;
+          tmdb_title=EXCLUDED.tmdb_title, tmdb_id=EXCLUDED.tmdb_id, media_type=EXCLUDED.media_type,
+          poster_path=EXCLUDED.poster_path, backdrop_path=EXCLUDED.backdrop_path, overview=EXCLUDED.overview,
+          release_year=EXCLUDED.release_year, genres=EXCLUDED.genres, director=EXCLUDED.director,
+          top_cast=EXCLUDED.top_cast, vote_average=EXCLUDED.vote_average, status=EXCLUDED.status, updated_at=now()`;
       if (r.status === "ok") ok++; else none++;
     } catch (e) {
       err++;

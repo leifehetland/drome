@@ -28,8 +28,19 @@ psql "$DATABASE_URL" -f ../db_test/app_users.sql
 # 3. catalog enhancements
 psql "$DATABASE_URL" -f ../db_test/tmdb_cache.sql          # TMDB enrichment cache
 psql "$DATABASE_URL" -f ../db_test/tmdb_extra_ids.sql      # compilation extra ids
+psql "$DATABASE_URL" -f ../db_test/tmdb_title.sql          # canonical display titles
 psql "$DATABASE_URL" -f ../db_test/enable_fuzzy_search.sql # pg_trgm + trigram indexes
 ```
+
+After adding `tmdb_title`, populate canonical titles for already-matched rows
+(one-time, ~15 min; new matches store it automatically):
+
+```bash
+DATABASE_URL="..." TMDB_READ_TOKEN="..." node scripts/tmdb_match.mjs --backfill-titles
+```
+
+Grouped entries display `tmdb_title` when present, falling back to the store title,
+so the site works before and during the backfill.
 
 Fuzzy search degrades gracefully: if `enable_fuzzy_search.sql` hasn't been run, search
 falls back to substring matching automatically (no crash).

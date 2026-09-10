@@ -4,7 +4,7 @@ import { posterUrl } from "@/db/queries";
 
 function href(film: FilmRow) {
   return film.tmdb_id
-    ? `/films/detail?id=${film.tmdb_id}`
+    ? `/films/detail?id=${film.tmdb_id}&mt=${film.media_type ?? "movie"}`
     : `/films/detail?t=${encodeURIComponent(film.title)}`;
 }
 

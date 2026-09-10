@@ -18,9 +18,10 @@ export function letterboxdUrl(tmdbId: number | null | undefined, mediaType: stri
 // The WHERE clause then drops the now-empty bare placeholders and paren-only rows.
 const CLEAN = sql`btrim(regexp_replace(item_title, '^AVAIL?([[:space:][:punct:]]+|$)', '', 'i'))`;
 const VALID = sql`${CLEAN} <> '' AND ${CLEAN} !~ '^\\('`;
-// Group key: collapse copies/discs that resolved to the same TMDB film/show into one
-// entry; unmatched titles group by their own cleaned title.
-const GKEY = sql`coalesce(t.tmdb_id::text, ${CLEAN})`;
+// Group key: collapse copies/discs that resolved to the same TMDB title into one entry;
+// unmatched titles group by their own cleaned title. Includes media_type because TMDB
+// ids are namespaced per type (movie 539 = Psycho, tv 539 = Squidbillies).
+const GKEY = sql`coalesce(t.tmdb_id::text || ':' || coalesce(t.media_type, 'movie'), ${CLEAN})`;
 
 export type FilmRow = {
   title: string;
@@ -29,6 +30,7 @@ export type FilmRow = {
   rate: string | null;
   movie_class: string | null;
   tmdb_id: number | null;
+  media_type: string | null;
   poster_path: string | null;
   release_year: number | null;
   genres: string | null;
@@ -86,7 +88,7 @@ function orderClause(f: FilmFilters, fuzzy: boolean) {
   if (f.sort === "year") return sql`max(t.release_year) DESC NULLS LAST, min(${CLEAN})`;
   if (f.sort === "rating") return sql`max(t.vote_average) DESC NULLS LAST, min(${CLEAN})`;
   if (f.q && fuzzy) return sql`max(similarity(${CLEAN}, ${f.q.trim()})) DESC, min(${CLEAN})`;
-  return sql`min(${CLEAN})`;
+  return sql`coalesce(max(t.tmdb_title), min(${CLEAN}))`;
 }
 
 // pg_trgm missing -> Postgres 42883 (undefined function/operator). Fall back to substring.
@@ -98,12 +100,13 @@ async function runGetFilms(f: FilmFilters, fuzzy: boolean) {
   const limit = Math.min(Math.max(f.limit ?? 48, 1), 200);
   const offset = Math.max(f.offset ?? 0, 0);
   const rows = await db.execute<FilmRow>(sql`
-    SELECT min(${CLEAN}) AS title,
+    SELECT coalesce(max(t.tmdb_title), min(${CLEAN})) AS title,
            string_agg(DISTINCT movie_format, ',') FILTER (WHERE movie_format <> '') AS formats,
            sum(GREATEST(coalesce(quantity, 0), 0))::float8 AS total_copies,
            max(movie_rate)  AS rate,
            max(movie_class) AS movie_class,
            max(t.tmdb_id)      AS tmdb_id,
+           max(t.media_type)   AS media_type,
            max(t.poster_path)  AS poster_path,
            max(t.release_year) AS release_year,
            max(t.genres)       AS genres,
@@ -203,11 +206,11 @@ export async function getRatings(): Promise<string[]> {
 /** Films within a category, poster-first — for the landing carousels. */
 export async function getFilmsByCategory(code: string, limit = 20) {
   const rows = await db.execute<FilmRow>(sql`
-    SELECT min(${CLEAN}) AS title,
+    SELECT coalesce(max(t.tmdb_title), min(${CLEAN})) AS title,
            string_agg(DISTINCT movie_format, ',') FILTER (WHERE movie_format <> '') AS formats,
            sum(GREATEST(coalesce(quantity, 0), 0))::float8 AS total_copies,
            max(movie_rate) AS rate, max(movie_class) AS movie_class,
-           max(t.tmdb_id) AS tmdb_id, max(t.poster_path) AS poster_path,
+           max(t.tmdb_id) AS tmdb_id, max(t.media_type) AS media_type, max(t.poster_path) AS poster_path,
            max(t.release_year) AS release_year, max(t.genres) AS genres, max(t.director) AS director,
            count(DISTINCT ${CLEAN})::int AS variants
     FROM inventor i
@@ -234,7 +237,7 @@ export type FilmDetail = FilmRow & {
 
 function detailSelect(whereExpr: ReturnType<typeof sql>, groupExpr: ReturnType<typeof sql>) {
   return sql`
-    SELECT min(${CLEAN}) AS title,
+    SELECT coalesce(max(t.tmdb_title), min(${CLEAN})) AS title,
            string_agg(DISTINCT movie_format, ',') FILTER (WHERE movie_format <> '') AS formats,
            string_agg(DISTINCT item_type, ',') FILTER (WHERE item_type <> '') AS item_types,
            string_agg(DISTINCT location, ',')  FILTER (WHERE coalesce(location,'') <> '') AS locations,
@@ -259,8 +262,13 @@ export async function getFilmDetail(title: string): Promise<FilmDetail | null> {
   return (rows as unknown as FilmDetail[])[0] ?? null;
 }
 
-export async function getFilmDetailById(tmdbId: number): Promise<FilmDetail | null> {
-  const rows = await db.execute<FilmDetail>(detailSelect(sql`t.tmdb_id = ${tmdbId}`, sql`t.tmdb_id`));
+export async function getFilmDetailById(tmdbId: number, mediaType = "movie"): Promise<FilmDetail | null> {
+  const rows = await db.execute<FilmDetail>(
+    detailSelect(
+      sql`t.tmdb_id = ${tmdbId} AND coalesce(t.media_type, 'movie') = ${mediaType}`,
+      sql`t.tmdb_id, coalesce(t.media_type, 'movie')`,
+    ),
+  );
   return (rows as unknown as FilmDetail[])[0] ?? null;
 }
 
