@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     genre: searchParams.get("genre") ?? undefined,
     decade: searchParams.get("decade") ?? undefined,
     director: searchParams.get("director") ?? undefined,
+    country: searchParams.get("country") ?? undefined,
     sort: (["title", "year", "rating"].includes(sortParam ?? "") ? sortParam : undefined) as
       | "title" | "year" | "rating" | undefined,
     limit: Number(searchParams.get("limit")) || 48,

@@ -19,6 +19,7 @@ if (!TOKEN && !APIKEY) { console.error("TMDB_READ_TOKEN or TMDB_API_KEY required
 
 const RETRY = process.argv.includes("--retry");
 const BACKFILL_TITLES = process.argv.includes("--backfill-titles");
+const BACKFILL_COUNTRY = process.argv.includes("--backfill-country");
 const LIMIT = Number((process.argv.find((a) => a.startsWith("--limit=")) || "").split("=")[1]) || 0;
 
 const sql = postgres(DB, { prepare: false });
@@ -69,25 +70,50 @@ async function ensureTable() {
     CREATE TABLE IF NOT EXISTS tmdb_cache (
       title text PRIMARY KEY, tmdb_title text, tmdb_id bigint, media_type text, poster_path text,
       backdrop_path text, overview text, release_year bigint, genres text,
-      director text, top_cast text, vote_average double precision, extra_tmdb_ids text,
+      director text, top_cast text, vote_average double precision, extra_tmdb_ids text, country text,
       status text NOT NULL DEFAULT 'nomatch', updated_at timestamptz NOT NULL DEFAULT now()
     )`;
   await sql`ALTER TABLE tmdb_cache ADD COLUMN IF NOT EXISTS tmdb_title text`;
+  await sql`ALTER TABLE tmdb_cache ADD COLUMN IF NOT EXISTS country text`;
+}
+
+// Backfill primary production country for already-matched rows.
+async function backfillCountry() {
+  const rows = await sql`
+    SELECT title, tmdb_id, coalesce(media_type, 'movie') AS media_type
+    FROM tmdb_cache WHERE status = 'ok' AND tmdb_id IS NOT NULL AND country IS NULL`;
+  console.log(`${rows.length} matched rows missing a country.`);
+  let done = 0, err = 0;
+  for (const r of rows) {
+    try {
+      const d = await tmdb(`/${r.media_type === "tv" ? "tv" : "movie"}/${r.tmdb_id}`);
+      const country = (d.production_countries || [])[0]?.name || null;
+      await sql`UPDATE tmdb_cache SET country = ${country} WHERE title = ${r.title}`;
+      done++;
+    } catch (e) {
+      err++;
+      if ((done + err) % 200 === 0) console.error(`  error on "${r.title}": ${e.message}`);
+    }
+    if ((done + err) % 200 === 0) console.log(`  ${done + err}/${rows.length}`);
+    await sleep(40);
+  }
+  console.log(`\nCountry backfill done. updated=${done} error=${err}`);
 }
 
 async function upsert(title, r) {
   await sql`
     INSERT INTO tmdb_cache (title, tmdb_title, tmdb_id, media_type, poster_path, backdrop_path,
-      overview, release_year, genres, director, top_cast, vote_average, status, updated_at)
+      overview, release_year, genres, director, top_cast, vote_average, country, status, updated_at)
     VALUES (${title}, ${r.tmdb_title ?? null}, ${r.tmdb_id ?? null}, ${r.media_type ?? null}, ${r.poster_path ?? null},
       ${r.backdrop_path ?? null}, ${r.overview ?? null}, ${r.release_year ?? null},
       ${r.genres ?? null}, ${r.director ?? null}, ${r.top_cast ?? null},
-      ${r.vote_average ?? null}, ${r.status}, now())
+      ${r.vote_average ?? null}, ${r.country ?? null}, ${r.status}, now())
     ON CONFLICT (title) DO UPDATE SET
       tmdb_title=EXCLUDED.tmdb_title, tmdb_id=EXCLUDED.tmdb_id, media_type=EXCLUDED.media_type,
       poster_path=EXCLUDED.poster_path, backdrop_path=EXCLUDED.backdrop_path, overview=EXCLUDED.overview,
       release_year=EXCLUDED.release_year, genres=EXCLUDED.genres, director=EXCLUDED.director,
-      top_cast=EXCLUDED.top_cast, vote_average=EXCLUDED.vote_average, status=EXCLUDED.status, updated_at=now()`;
+      top_cast=EXCLUDED.top_cast, vote_average=EXCLUDED.vote_average, country=EXCLUDED.country,
+      status=EXCLUDED.status, updated_at=now()`;
 }
 
 // Backfill canonical titles for already-matched rows that predate the tmdb_title column.
@@ -187,7 +213,7 @@ async function match(title) {
   const isTv = hit.media_type === "tv";
   const name = (isTv ? hit.name : hit.title) || null;
   const date = isTv ? hit.first_air_date : hit.release_date;
-  let director = null, cast = null, genres = null;
+  let director = null, cast = null, genres = null, country = null;
   try {
     const d = await tmdb(`/${isTv ? "tv" : "movie"}/${hit.id}?append_to_response=credits`);
     genres = (d.genres || []).map((g) => g.name).join(", ") || null;
@@ -195,6 +221,7 @@ async function match(title) {
       ? (d.created_by || []).map((c) => c.name).join(", ") || null
       : (d.credits?.crew || []).find((c) => c.job === "Director")?.name ?? null;
     cast = (d.credits?.cast || []).slice(0, 4).map((c) => c.name).join(", ") || null;
+    country = (d.production_countries || [])[0]?.name || null;
   } catch { /* keep search-level data */ }
 
   return {
@@ -210,6 +237,7 @@ async function match(title) {
     director,
     top_cast: cast,
     vote_average: hit.vote_average ?? null,
+    country,
   };
 }
 
@@ -217,6 +245,11 @@ async function match(title) {
   await ensureTable();
   if (BACKFILL_TITLES) {
     await backfillTitles();
+    await sql.end();
+    return;
+  }
+  if (BACKFILL_COUNTRY) {
+    await backfillCountry();
     await sql.end();
     return;
   }

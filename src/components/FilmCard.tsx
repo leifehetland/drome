@@ -27,13 +27,20 @@ function Poster({ film, className }: { film: FilmRow; className?: string }) {
 export function FilmCardGrid({ film }: { film: FilmRow }) {
   return (
     <Link href={href(film)} className="group block">
-      <div className="relative">
+      <div className="relative overflow-hidden rounded-lg">
         <Poster
           film={film}
-          className="w-full aspect-[2/3] object-cover rounded-lg group-hover:opacity-80 transition"
+          className="w-full aspect-[2/3] object-cover group-hover:scale-105 transition duration-300"
         />
+        {/* hover gradient + rating */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition" />
+        {film.vote_average ? (
+          <span className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[11px] font-medium text-amber-300 opacity-0 group-hover:opacity-100 transition">
+            ★ {Number(film.vote_average).toFixed(1)}
+          </span>
+        ) : null}
         {film.variants > 1 && (
-          <span className="absolute top-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] text-neutral-200">
+          <span className="absolute top-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] text-neutral-200">
             {film.variants} eds
           </span>
         )}
@@ -78,9 +85,9 @@ export function FilmCarousel({ title, films }: { title: string; films: FilmRow[]
   return (
     <section className="mb-8">
       <h2 className="text-lg font-semibold mb-3">{title}</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 snap-x">
+      <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1 snap-x">
         {films.map((f) => (
-          <div key={f.title} className="w-32 shrink-0 snap-start">
+          <div key={f.title} className="w-36 sm:w-44 shrink-0 snap-start">
             <FilmCardGrid film={f} />
           </div>
         ))}

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "./index";
 import type { TmdbDetails } from "@/lib/tmdb";
+import { sectionLabel } from "./sectionLabels";
 
 /** TMDB image helper (poster paths are public; safe on the client). */
 export function posterUrl(path: string | null | undefined, size = "w342") {
@@ -35,6 +36,7 @@ export type FilmRow = {
   release_year: number | null;
   genres: string | null;
   director: string | null;
+  vote_average: number | null;
   variants: number; // distinct catalog titles collapsed into this entry (discs/editions)
 };
 
@@ -48,19 +50,24 @@ export type FilmFilters = {
   genre?: string; // TMDB genre (substring of comma list)
   decade?: string; // e.g. "1990" => 1990-1999
   director?: string; // TMDB director (substring)
+  country?: string; // production country (exact)
   sort?: FilmSort;
   limit?: number;
   offset?: number;
 };
 
+// Trigram similarity floor for fuzzy title matches. Higher = stricter (fewer stray
+// hits like "Two Blue Balls" for "twin peaks"); low enough to still tolerate typos.
+const FUZZY_MIN = 0.4;
+
 function textFilter(f: FilmFilters, fuzzy: boolean) {
   if (!f.q) return null;
   const q = f.q.trim();
   const like = `%${q}%`;
-  // Fuzzy: trigram similarity on title (typo-tolerant) OR substring across people/overview.
-  // Fallback: substring only (works without the pg_trgm extension).
+  // Fuzzy: bounded trigram similarity on title (typo-tolerant) OR substring across
+  // people/overview. Fallback: substring only (works without the pg_trgm extension).
   return fuzzy
-    ? sql`(${CLEAN} % ${q} OR ${CLEAN} ILIKE ${like} OR t.director ILIKE ${like}
+    ? sql`(similarity(${CLEAN}, ${q}) > ${FUZZY_MIN} OR ${CLEAN} ILIKE ${like} OR t.director ILIKE ${like}
            OR t.top_cast ILIKE ${like} OR t.overview ILIKE ${like})`
     : sql`(${CLEAN} ILIKE ${like} OR t.director ILIKE ${like}
            OR t.top_cast ILIKE ${like} OR t.overview ILIKE ${like})`;
@@ -75,6 +82,7 @@ function whereClause(f: FilmFilters, fuzzy: boolean) {
   if (f.rating) parts.push(sql`movie_rate = ${f.rating}`);
   if (f.genre) parts.push(sql`t.genres ILIKE ${"%" + f.genre + "%"}`);
   if (f.director) parts.push(sql`t.director ILIKE ${"%" + f.director.trim() + "%"}`);
+  if (f.country) parts.push(sql`t.country = ${f.country}`);
   if (f.decade) {
     const d = parseInt(f.decade, 10);
     if (!Number.isNaN(d)) parts.push(sql`t.release_year BETWEEN ${d} AND ${d + 9}`);
@@ -88,7 +96,8 @@ function orderClause(f: FilmFilters, fuzzy: boolean) {
   if (f.sort === "year") return sql`max(t.release_year) DESC NULLS LAST, min(${CLEAN})`;
   if (f.sort === "rating") return sql`max(t.vote_average) DESC NULLS LAST, min(${CLEAN})`;
   if (f.q && fuzzy) return sql`max(similarity(${CLEAN}, ${f.q.trim()})) DESC, min(${CLEAN})`;
-  return sql`coalesce(max(t.tmdb_title), min(${CLEAN}))`;
+  // Title A–Z, ignoring a leading article ("The Wire" sorts under W).
+  return sql`regexp_replace(coalesce(max(t.tmdb_title), min(${CLEAN})), '^(the|a|an)\\s+', '', 'i')`;
 }
 
 // pg_trgm missing -> Postgres 42883 (undefined function/operator). Fall back to substring.
@@ -111,6 +120,7 @@ async function runGetFilms(f: FilmFilters, fuzzy: boolean) {
            max(t.release_year) AS release_year,
            max(t.genres)       AS genres,
            max(t.director)     AS director,
+           max(t.vote_average) AS vote_average,
            count(DISTINCT ${CLEAN})::int AS variants
     FROM inventor i
     LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
@@ -161,6 +171,19 @@ export async function getGenres(): Promise<string[]> {
   return (rows as unknown as { genre: string }[]).map((r) => r.genre);
 }
 
+export async function getCountries(minCount = 5): Promise<string[]> {
+  try {
+    const rows = await db.execute<{ country: string }>(sql`
+      SELECT country, count(*) AS n FROM tmdb_cache
+      WHERE status = 'ok' AND coalesce(country, '') <> ''
+      GROUP BY country HAVING count(*) >= ${minCount}
+      ORDER BY count(*) DESC`);
+    return (rows as unknown as { country: string }[]).map((r) => r.country);
+  } catch {
+    return []; // country column not present yet
+  }
+}
+
 export async function getDecades(): Promise<number[]> {
   const rows = await db.execute<{ decade: number }>(sql`
     SELECT DISTINCT (floor(release_year / 10) * 10)::int AS decade
@@ -181,12 +204,17 @@ export async function getCategories(minCount = 8, limit = 300): Promise<Category
     FROM inventor i
     LEFT JOIN class c ON c.class = i.movie_class
     WHERE ${VALID} AND coalesce(i.movie_class, '') <> ''
+      AND i.movie_class NOT IN ('NEW', 'DVD', 'MIS')
     GROUP BY i.movie_class
     HAVING count(DISTINCT ${CLEAN}) >= ${minCount}
     ORDER BY count(DISTINCT ${CLEAN}) DESC
     LIMIT ${limit}
   `);
-  return (rows as unknown as Category[]).map((r) => ({ ...r, count: Number(r.count) }));
+  return (rows as unknown as Category[]).map((r) => ({
+    ...r,
+    label: sectionLabel(r.label),
+    count: Number(r.count),
+  }));
 }
 
 export async function getFormats(): Promise<string[]> {
@@ -212,6 +240,7 @@ export async function getFilmsByCategory(code: string, limit = 20) {
            max(movie_rate) AS rate, max(movie_class) AS movie_class,
            max(t.tmdb_id) AS tmdb_id, max(t.media_type) AS media_type, max(t.poster_path) AS poster_path,
            max(t.release_year) AS release_year, max(t.genres) AS genres, max(t.director) AS director,
+           max(t.vote_average) AS vote_average,
            count(DISTINCT ${CLEAN})::int AS variants
     FROM inventor i
     LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
@@ -337,6 +366,65 @@ export async function getCustomerRentals(customerId: string, limit = 100) {
   } catch {
     return [];
   }
+}
+
+// ---- member watchlist / holds ------------------------------------------------------
+
+export type SavedFilm = {
+  id: number;
+  tmdb_id: number | null;
+  media_type: string | null;
+  title: string | null;
+  kind: string;
+};
+
+export async function getSaves(userId: number, kind?: string) {
+  const rows = await db.execute<SavedFilm>(sql`
+    SELECT id, tmdb_id, media_type, title, kind
+    FROM member_saves
+    WHERE user_id = ${userId} ${kind ? sql`AND kind = ${kind}` : sql``}
+    ORDER BY created_at DESC`);
+  return rows as unknown as SavedFilm[];
+}
+
+/** Which (tmdb_id:media_type) refs the user has saved, per kind — for toggling UI. */
+export async function getSavedRefs(userId: number) {
+  const rows = await db.execute<{ tmdb_id: number | null; media_type: string | null; kind: string }>(sql`
+    SELECT tmdb_id, media_type, kind FROM member_saves WHERE user_id = ${userId}`);
+  const set = new Set<string>();
+  for (const r of rows as unknown as { tmdb_id: number | null; media_type: string | null; kind: string }[]) {
+    set.add(`${r.kind}:${r.tmdb_id ?? ""}:${r.media_type ?? ""}`);
+  }
+  return set;
+}
+
+export async function addSave(
+  userId: number,
+  s: { tmdbId: number | null; mediaType: string | null; title: string | null; kind: string },
+) {
+  await db.execute(sql`
+    INSERT INTO member_saves (user_id, tmdb_id, media_type, title, kind)
+    SELECT ${userId}, ${s.tmdbId}, ${s.mediaType}, ${s.title}, ${s.kind}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM member_saves
+      WHERE user_id = ${userId} AND kind = ${s.kind}
+        AND coalesce(tmdb_id, -1) = coalesce(${s.tmdbId}::bigint, -1)
+        AND coalesce(media_type, '') = coalesce(${s.mediaType}, '')
+        AND coalesce(title, '') = coalesce(${s.title}, ''))`);
+}
+
+export async function removeSave(userId: number, id: number) {
+  await db.execute(sql`DELETE FROM member_saves WHERE id = ${id} AND user_id = ${userId}`);
+}
+
+export async function removeSaveByRef(
+  userId: number,
+  s: { tmdbId: number | null; mediaType: string | null; kind: string },
+) {
+  await db.execute(sql`
+    DELETE FROM member_saves WHERE user_id = ${userId} AND kind = ${s.kind}
+      AND coalesce(tmdb_id, -1) = coalesce(${s.tmdbId}::bigint, -1)
+      AND coalesce(media_type, '') = coalesce(${s.mediaType}, '')`);
 }
 
 export type CustomerRow = {

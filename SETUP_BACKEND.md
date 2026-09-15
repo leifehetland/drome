@@ -22,13 +22,15 @@ psql "$DATABASE_URL" -f ../db_test/vmtvid_export.sql          # loads all 17 tab
 #   psql "$DATABASE_URL" -f ../db_test/history_recent.sql     # 2014+ slice (~185 MB in PG)
 psql "$DATABASE_URL" -f ../db_test/add_clarion_date_columns_core.sql  # core date columns
 
-# 2. auth table
+# 2. auth + member tables
 psql "$DATABASE_URL" -f ../db_test/app_users.sql
+psql "$DATABASE_URL" -f ../db_test/member_saves.sql     # member watchlist / holds
 
 # 3. catalog enhancements
 psql "$DATABASE_URL" -f ../db_test/tmdb_cache.sql          # TMDB enrichment cache
 psql "$DATABASE_URL" -f ../db_test/tmdb_extra_ids.sql      # compilation extra ids
 psql "$DATABASE_URL" -f ../db_test/tmdb_title.sql          # canonical display titles
+psql "$DATABASE_URL" -f ../db_test/tmdb_country.sql        # production country (for the country filter)
 psql "$DATABASE_URL" -f ../db_test/enable_fuzzy_search.sql # pg_trgm + trigram indexes
 ```
 

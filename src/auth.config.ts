@@ -18,6 +18,7 @@ export const authConfig = {
     },
     session({ session, token }) {
       if (session.user) {
+        (session.user as { id?: string }).id = token.sub;
         (session.user as { role?: string }).role = (token.role as string) ?? "member";
         (session.user as { customerId?: string | null }).customerId =
           (token.customerId as string | null) ?? null;

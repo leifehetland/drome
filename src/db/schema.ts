@@ -59,6 +59,17 @@ export const appUsers = pgTable("app_users", {
 
 export type AppUser = typeof appUsers.$inferSelect;
 
+/** Member watchlist / holds. kind: 'watchlist' | 'hold'. */
+export const memberSaves = pgTable("member_saves", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull(),
+  tmdbId: bigint("tmdb_id", { mode: "number" }),
+  mediaType: text("media_type"),
+  title: text("title"),
+  kind: text("kind").notNull().default("watchlist"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /**
  * TMDB enrichment, keyed by the cleaned catalog title. Populated by the batch
  * script (scripts/tmdb_match.mjs). status: 'ok' | 'nomatch' | 'error'.
@@ -76,6 +87,7 @@ export const tmdbCache = pgTable("tmdb_cache", {
   director: text("director"),
   topCast: text("top_cast"), // comma-separated
   voteAverage: doublePrecision("vote_average"),
+  country: text("country"), // primary production country (display name)
   extraTmdbIds: text("extra_tmdb_ids"), // comma-separated ids for twin-packs/double features
   status: text("status").notNull().default("nomatch"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

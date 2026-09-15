@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getFilmDetail, getFilmDetailById, posterUrl, letterboxdUrl } from "@/db/queries";
+import { getFilmDetail, getFilmDetailById, getSavedRefs, posterUrl, letterboxdUrl } from "@/db/queries";
+import { auth } from "@/auth";
+import { saveFilm, unsaveFilmByRef } from "@/app/saves-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,13 @@ export default async function FilmDetailPage({
       ? await getFilmDetail(t)
       : null;
   if (!film) notFound();
+
+  const session = await auth();
+  const uid = session?.user?.id;
+  const savedRefs = uid ? await getSavedRefs(Number(uid)) : new Set<string>();
+  const refKey = (kind: string) => `${kind}:${film.tmdb_id ?? ""}:${film.media_type ?? ""}`;
+  const inWatchlist = savedRefs.has(refKey("watchlist"));
+  const onHold = savedRefs.has(refKey("hold"));
 
   const poster = posterUrl(film.poster_path, "w500");
   const letterboxd = letterboxdUrl(film.tmdb_id, film.media_type);
@@ -61,6 +70,15 @@ export default async function FilmDetailPage({
               </p>
             )}
 
+            {uid && (
+              <div className="mt-5 flex flex-wrap gap-2">
+                <SaveButton kind="watchlist" saved={inWatchlist} film={film}
+                  labelAdd="+ Watchlist" labelHave="✓ In Watchlist" />
+                <SaveButton kind="hold" saved={onHold} film={film}
+                  labelAdd="Request hold" labelHave="✓ Hold requested" />
+              </div>
+            )}
+
             {(letterboxd || tmdb) && (
               <div className="mt-5 flex flex-wrap gap-2">
                 {letterboxd && (
@@ -102,6 +120,34 @@ export default async function FilmDetailPage({
         </div>
       </div>
     </main>
+  );
+}
+
+function SaveButton({
+  kind, saved, film, labelAdd, labelHave,
+}: {
+  kind: "watchlist" | "hold";
+  saved: boolean;
+  film: { tmdb_id: number | null; media_type: string | null; title: string };
+  labelAdd: string;
+  labelHave: string;
+}) {
+  return (
+    <form action={saved ? unsaveFilmByRef : saveFilm}>
+      <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name="tmdbId" value={film.tmdb_id ?? ""} />
+      <input type="hidden" name="mediaType" value={film.media_type ?? ""} />
+      <input type="hidden" name="title" value={film.title} />
+      <button
+        className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+          saved
+            ? "bg-neutral-800 text-neutral-200 hover:bg-neutral-700"
+            : "bg-white text-black hover:bg-neutral-200"
+        }`}
+      >
+        {saved ? labelHave : labelAdd}
+      </button>
+    </form>
   );
 }
 

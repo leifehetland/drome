@@ -1,11 +1,17 @@
 import { auth, signOut } from "@/auth";
 import Link from "next/link";
+import { getSaves, type SavedFilm } from "@/db/queries";
+import { removeSaveById } from "@/app/saves-actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountPage() {
   const session = await auth();
   const user = session?.user;
+  const uid = user?.id ? Number(user.id) : null;
+  const [watchlist, holds] = uid
+    ? await Promise.all([getSaves(uid, "watchlist"), getSaves(uid, "hold")])
+    : [[], []];
 
   return (
     <main className="min-h-screen bg-black text-white px-6 py-10">
@@ -45,8 +51,40 @@ export default async function AccountPage() {
             </Link>
           )}
         </div>
+
+        <SaveList title="Watchlist" items={watchlist} empty="Nothing saved yet — add films from the catalog." />
+        <SaveList title="Holds" items={holds} empty="No holds requested." />
       </div>
     </main>
+  );
+}
+
+function filmHref(s: SavedFilm) {
+  return s.tmdb_id
+    ? `/films/detail?id=${s.tmdb_id}&mt=${s.media_type ?? "movie"}`
+    : `/films/detail?t=${encodeURIComponent(s.title ?? "")}`;
+}
+
+function SaveList({ title, items, empty }: { title: string; items: SavedFilm[]; empty: string }) {
+  return (
+    <section className="mt-10">
+      <h2 className="text-lg font-medium mb-3">{title}</h2>
+      {items.length === 0 ? (
+        <p className="text-sm text-neutral-500">{empty}</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((s) => (
+            <li key={s.id} className="flex items-center justify-between gap-3 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2">
+              <Link href={filmHref(s)} className="text-sm hover:text-white truncate">{s.title ?? "Untitled"}</Link>
+              <form action={removeSaveById}>
+                <input type="hidden" name="id" value={s.id} />
+                <button className="text-xs text-neutral-500 hover:text-red-400 shrink-0">Remove</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
