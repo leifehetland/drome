@@ -12,12 +12,42 @@ import {
   type FilmFilters,
   type FilmSort,
 } from "@/db/queries";
-import { FilmCardGrid, FilmCardRow, FilmCarousel } from "@/components/FilmCard";
+import { FilmCarousel } from "@/components/FilmCard";
+import FilmResults from "@/components/FilmResults";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 48;
 const LANDING_ROWS = 8;
+
+// Curated swaps for the landing carousels (which otherwise show the biggest sections).
+// Key = section to drop; value = replacements to try in order, matched on the cleaned
+// section label. If none qualify, the next-largest section fills the slot.
+const LANDING_SWAPS: Record<string, string[]> = {
+  "woody allen": ["billy wilder", "orson welles"],
+};
+
+type Category = Awaited<ReturnType<typeof getCategories>>[number];
+
+function landingSections(categories: Category[]): Category[] {
+  const norm = (c: Category) => c.label.trim().toLowerCase();
+  const dropped = new Set(Object.keys(LANDING_SWAPS));
+  const picked: Category[] = [];
+  for (const c of categories.slice(0, LANDING_ROWS)) {
+    const alts = LANDING_SWAPS[norm(c)];
+    if (!alts) { picked.push(c); continue; }
+    const alt = alts
+      .map((a) => categories.find((x) => norm(x) === a))
+      .find((x): x is Category => Boolean(x) && !picked.includes(x!));
+    if (alt) picked.push(alt);
+  }
+  // Backfill any empty slots with the next-largest sections.
+  for (const c of categories) {
+    if (picked.length >= LANDING_ROWS) break;
+    if (!picked.includes(c) && !dropped.has(norm(c))) picked.push(c);
+  }
+  return picked;
+}
 
 type SP = {
   q?: string; category?: string; format?: string; rating?: string;
@@ -35,15 +65,6 @@ function filtersFrom(sp: SP): FilmFilters {
 
 function hasAnyFilter(sp: SP) {
   return Boolean(sp.q || sp.category || sp.format || sp.rating || sp.genre || sp.decade || sp.director || sp.country);
-}
-
-function qs(params: Record<string, string | number | undefined>) {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "" && v !== null) p.set(k, String(v));
-  }
-  const s = p.toString();
-  return s ? `/films?${s}` : "/films";
 }
 
 export default async function FilmsPage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -103,7 +124,7 @@ export default async function FilmsPage({ searchParams }: { searchParams: Promis
             ) : (
               <>
                 {await Promise.all(
-                  categories.slice(0, LANDING_ROWS).map(async (c) => (
+                  landingSections(categories).map(async (c) => (
                     <FilmCarousel key={c.code} title={c.label} films={await getFilmsByCategory(c.code, 20)} />
                   ))
                 )}
@@ -139,30 +160,14 @@ async function Results({
   const pages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
 
   return (
-    <>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-neutral-500">{total.toLocaleString()} titles · page {page} of {pages}</p>
-        <ViewToggle sp={sp} view={view} />
-      </div>
-
-      {films.length === 0 ? (
-        <p className="text-neutral-400">No matches. Try clearing a filter.</p>
-      ) : view === "grid" ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
-          {films.map((f) => <FilmCardGrid key={f.title} film={f} />)}
-        </div>
-      ) : (
-        <div className="space-y-2">{films.map((f) => <FilmCardRow key={f.title} film={f} />)}</div>
-      )}
-
-      {pages > 1 && (
-        <div className="flex items-center justify-center gap-4 mt-8">
-          <PageLink sp={sp} page={page - 1} disabled={page <= 1}>← Prev</PageLink>
-          <span className="text-sm text-neutral-500">{page} / {pages}</span>
-          <PageLink sp={sp} page={page + 1} disabled={page >= pages}>Next →</PageLink>
-        </div>
-      )}
-    </>
+    <FilmResults
+      films={films}
+      total={total}
+      page={page}
+      pages={pages}
+      initialView={view}
+      base={base(sp)}
+    />
   );
 }
 
@@ -171,24 +176,4 @@ function base(sp: SP) {
     q: sp.q, category: sp.category, format: sp.format, rating: sp.rating,
     genre: sp.genre, decade: sp.decade, director: sp.director, country: sp.country, sort: sp.sort,
   };
-}
-
-function ViewToggle({ sp, view }: { sp: SP; view: "grid" | "list" }) {
-  const b = { ...base(sp), page: sp.page };
-  return (
-    <div className="inline-flex rounded-md border border-neutral-700 overflow-hidden text-sm">
-      <Link href={qs({ ...b, view: "grid" })} className={`px-3 py-1 ${view === "grid" ? "bg-white text-black" : "text-neutral-300"}`}>Grid</Link>
-      <Link href={qs({ ...b, view: "list" })} className={`px-3 py-1 ${view === "list" ? "bg-white text-black" : "text-neutral-300"}`}>List</Link>
-    </div>
-  );
-}
-
-function PageLink({ sp, page, disabled, children }: { sp: SP; page: number; disabled: boolean; children: React.ReactNode }) {
-  if (disabled) return <span className="text-sm text-neutral-700">{children}</span>;
-  return (
-    <Link href={qs({ ...base(sp), view: sp.view, page })}
-      className="text-sm rounded-md border border-neutral-700 px-3 py-1 hover:border-neutral-400">
-      {children}
-    </Link>
-  );
 }

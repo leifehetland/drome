@@ -10,6 +10,7 @@
 //
 // Safe to re-run: already-matched titles are skipped, so you can stop/resume.
 import postgres from "postgres";
+import { makeTmdb, sleep, cleanExpr, candidateQueries, buildRow } from "./lib/tmdb_common.mjs";
 
 const DB = process.env.DATABASE_URL;
 const TOKEN = process.env.TMDB_READ_TOKEN;
@@ -23,47 +24,7 @@ const BACKFILL_COUNTRY = process.argv.includes("--backfill-country");
 const LIMIT = Number((process.argv.find((a) => a.startsWith("--limit=")) || "").split("=")[1]) || 0;
 
 const sql = postgres(DB, { prepare: false });
-const TMDB = "https://api.themoviedb.org/3";
-const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}`, accept: "application/json" } : { accept: "application/json" };
-const withKey = (u) => (APIKEY ? `${u}${u.includes("?") ? "&" : "?"}api_key=${APIKEY}` : u);
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function tmdb(path) {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(withKey(`${TMDB}${path}`), { headers: authHeaders });
-    if (res.status === 429) {
-      const wait = Number(res.headers.get("retry-after") || 2) * 1000;
-      await sleep(wait);
-      continue;
-    }
-    if (!res.ok) throw new Error(`TMDB ${res.status} for ${path}`);
-    return res.json();
-  }
-  throw new Error(`TMDB rate-limited repeatedly for ${path}`);
-}
-
-// Normalize a catalog title into a searchable show/movie name: reorder a trailing
-// article and strip season/disc/volume/part/edition suffixes.
-function normalizeTitle(title) {
-  let s = title.trim().replace(/^AVAIL?(?:[\s\p{P}]+|$)/iu, "").trim() || title.trim();
-  const m = s.match(/^(.*),\s*(THE|A|AN)\b(.*)$/i); // "SINNER, THE 1.1" -> "THE SINNER 1.1"
-  if (m) s = `${m[2]} ${m[1]}${m[3]}`.replace(/\s{2,}/g, " ").trim();
-  s = s
-    .replace(/\s*#\d+.*$/i, "")
-    .replace(/\s*\bDISC?S?\b\s*\d*(\s*&\s*\d+)?.*$/i, "")
-    .replace(/\s*\bVOL(?:UME)?\.?\s*\d+.*$/i, "")
-    .replace(/\s*\bSEASON\b\s*\d+.*$/i, "")
-    .replace(/\s*\bS\.E\.?\b.*$/i, "")
-    .replace(/\s*\bSPEC(?:IAL)?\s*ED(?:ITION)?\.?\b.*$/i, "")
-    .replace(/\s*-\s*\d+\s*$/i, "")
-    .replace(/\s+\d+\.\d+\s*$/i, "")
-    .replace(/\s+\d+\s*$/i, "")
-    .replace(/\s*\([^)]*\)\s*$/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return s || title.trim();
-}
+const tmdb = makeTmdb({ token: TOKEN, apiKey: APIKEY });
 
 async function ensureTable() {
   await sql`
@@ -153,7 +114,7 @@ async function backfillTitles() {
 }
 
 // Same cleaned-title expression the app groups/joins on (keep in sync with queries.ts).
-const CLEAN = sql`btrim(regexp_replace(item_title, '^AVAIL?([[:space:][:punct:]]+|$)', '', 'i'))`;
+const CLEAN = cleanExpr(sql);
 
 async function titlesToProcess() {
   // Default: skip every title already attempted. --retry: only skip successful ones.
@@ -168,38 +129,6 @@ async function titlesToProcess() {
   return rows.map((r) => r.title);
 }
 
-// Remove edition/qualifier tags and parentheticals that block a match.
-function stripQualifiers(s) {
-  return s
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/\s*\([^)]*$/, " ") // unclosed trailing "(...", e.g. "(MINI-SERIE"
-    .replace(
-      /\b(CRITERION|COLLECTION|COLL|SPEC(?:IAL)?\s?ED(?:ITION)?|S\.E\.?|UNRATED|UNCUT|REMASTER(?:ED)?|ANNIVERSARY|DELUXE|LIMITED|EXTENDED(?:\s+CUT)?|DIRECTOR'?S?\s+CUT|BOX\s?SET|TRILOGY|COMPLETE)\b.*$/i,
-      ""
-    )
-    .replace(/[-:]\s*$/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-// Ordered query variants, most specific first.
-function candidateQueries(title) {
-  const out = [];
-  const push = (s) => {
-    const v = (s || "").replace(/\s{2,}/g, " ").trim();
-    if (v && !out.includes(v)) out.push(v);
-  };
-  const base = normalizeTitle(title);
-  push(stripQualifiers(base));
-  push(base);
-  if (title.includes("/")) push(stripQualifiers(normalizeTitle(title.split("/")[0]))); // double feature
-  const aka = title.split(/\s+aka\s+/i);
-  if (aka.length > 1) { push(stripQualifiers(normalizeTitle(aka[0]))); push(stripQualifiers(normalizeTitle(aka[1]))); }
-  const c = stripQualifiers(base);
-  if (c.includes(":")) push(c.split(":")[0]);
-  return out;
-}
-
 async function match(title) {
   // /search/multi covers movies AND TV; try each query variant until one hits.
   let hit = null;
@@ -209,36 +138,7 @@ async function match(title) {
     if (hit) break;
   }
   if (!hit) return { status: "nomatch" };
-
-  const isTv = hit.media_type === "tv";
-  const name = (isTv ? hit.name : hit.title) || null;
-  const date = isTv ? hit.first_air_date : hit.release_date;
-  let director = null, cast = null, genres = null, country = null;
-  try {
-    const d = await tmdb(`/${isTv ? "tv" : "movie"}/${hit.id}?append_to_response=credits`);
-    genres = (d.genres || []).map((g) => g.name).join(", ") || null;
-    director = isTv
-      ? (d.created_by || []).map((c) => c.name).join(", ") || null
-      : (d.credits?.crew || []).find((c) => c.job === "Director")?.name ?? null;
-    cast = (d.credits?.cast || []).slice(0, 4).map((c) => c.name).join(", ") || null;
-    country = (d.production_countries || [])[0]?.name || null;
-  } catch { /* keep search-level data */ }
-
-  return {
-    status: "ok",
-    tmdb_id: hit.id,
-    tmdb_title: name,
-    media_type: hit.media_type,
-    poster_path: hit.poster_path,
-    backdrop_path: hit.backdrop_path,
-    overview: hit.overview || null,
-    release_year: date ? Number(String(date).slice(0, 4)) || null : null,
-    genres,
-    director,
-    top_cast: cast,
-    vote_average: hit.vote_average ?? null,
-    country,
-  };
+  return buildRow(tmdb, hit);
 }
 
 (async () => {

@@ -5,6 +5,7 @@ import {
   bigint,
   bigserial,
   timestamp,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -92,3 +93,42 @@ export const tmdbCache = pgTable("tmdb_cache", {
   status: text("status").notNull().default("nomatch"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Director-aware TMDB match for a title within a store section (see scripts/tmdb_section_match.mjs). */
+export const tmdbSectionMatch = pgTable(
+  "tmdb_section_match",
+  {
+    title: text("title").notNull(),
+    movieClass: text("movie_class").notNull(),
+    tmdbTitle: text("tmdb_title"),
+    tmdbId: bigint("tmdb_id", { mode: "number" }),
+    mediaType: text("media_type"),
+    posterPath: text("poster_path"),
+    backdropPath: text("backdrop_path"),
+    overview: text("overview"),
+    releaseYear: bigint("release_year", { mode: "number" }),
+    genres: text("genres"),
+    director: text("director"),
+    topCast: text("top_cast"),
+    voteAverage: doublePrecision("vote_average"),
+    country: text("country"),
+    extraTmdbIds: text("extra_tmdb_ids"),
+    method: text("method"),
+    status: text("status").notNull().default("ok"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.title, t.movieClass] })],
+);
+
+/** Display-side re-filing of items shelved under the wrong section code in the POS data. */
+export const sectionReassign = pgTable(
+  "section_reassign",
+  {
+    title: text("title").notNull(),
+    fromClass: text("from_class").notNull(),
+    toClass: text("to_class").notNull(),
+    reason: text("reason"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.title, t.fromClass] })],
+);

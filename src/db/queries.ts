@@ -3,10 +3,8 @@ import { db } from "./index";
 import type { TmdbDetails } from "@/lib/tmdb";
 import { sectionLabel } from "./sectionLabels";
 
-/** TMDB image helper (poster paths are public; safe on the client). */
-export function posterUrl(path: string | null | undefined, size = "w342") {
-  return path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
-}
+// Lives in lib/poster so client components can use it without pulling in the DB.
+export { posterUrl } from "@/lib/poster";
 
 /** Letterboxd deep-link by TMDB id (movies only; TV isn't supported by Letterboxd). */
 export function letterboxdUrl(tmdbId: number | null | undefined, mediaType: string | null | undefined) {
@@ -23,6 +21,25 @@ const VALID = sql`${CLEAN} <> '' AND ${CLEAN} !~ '^\\('`;
 // unmatched titles group by their own cleaned title. Includes media_type because TMDB
 // ids are namespaced per type (movie 539 = Psycho, tv 539 = Squidbillies).
 const GKEY = sql`coalesce(t.tmdb_id::text || ':' || coalesce(t.media_type, 'movie'), ${CLEAN})`;
+
+// Effective section: the POS code, unless section_reassign re-files this title (e.g.
+// Spielberg films entered under SS, the Soderbergh code). See scripts/tmdb_section_match.mjs.
+const RCLASS = sql`coalesce((SELECT r.to_class FROM section_reassign r
+  WHERE r.title = ${CLEAN} AND r.from_class = i.movie_class), i.movie_class)`;
+
+// TMDB data for an inventory row (alias t). Prefers a director-aware match for the
+// row's section (tmdb_section_match) over the generic title-only match (tmdb_cache),
+// so e.g. SOLARIS under Soderbergh resolves to his 2002 film, not Tarkovsky's.
+const TCOLS = sql.raw(`tmdb_title, tmdb_id, media_type, poster_path, backdrop_path, overview,
+  release_year, genres, director, top_cast, vote_average, country, extra_tmdb_ids`);
+const TJOIN = sql`LEFT JOIN LATERAL (
+    SELECT * FROM (
+      SELECT 0 AS pri, ${TCOLS} FROM tmdb_section_match s
+       WHERE s.title = ${CLEAN} AND s.movie_class = ${RCLASS} AND s.status = 'ok'
+      UNION ALL
+      SELECT 1 AS pri, ${TCOLS} FROM tmdb_cache c WHERE c.title = ${CLEAN}
+    ) u ORDER BY pri LIMIT 1
+  ) t ON TRUE`;
 
 export type FilmRow = {
   title: string;
@@ -77,7 +94,7 @@ function whereClause(f: FilmFilters, fuzzy: boolean) {
   const parts = [VALID];
   const tf = textFilter(f, fuzzy);
   if (tf) parts.push(tf);
-  if (f.category) parts.push(sql`movie_class = ${f.category}`);
+  if (f.category) parts.push(sql`${RCLASS} = ${f.category}`);
   if (f.format) parts.push(sql`movie_format = ${f.format}`);
   if (f.rating) parts.push(sql`movie_rate = ${f.rating}`);
   if (f.genre) parts.push(sql`t.genres ILIKE ${"%" + f.genre + "%"}`);
@@ -102,7 +119,9 @@ function orderClause(f: FilmFilters, fuzzy: boolean) {
 
 // pg_trgm missing -> Postgres 42883 (undefined function/operator). Fall back to substring.
 function isMissingTrgm(err: unknown) {
-  return (err as { code?: string })?.code === "42883";
+  // Drizzle wraps driver errors (DrizzleQueryError), so the PG code may be on .cause.
+  const e = err as { code?: string; cause?: { code?: string } };
+  return e?.code === "42883" || e?.cause?.code === "42883";
 }
 
 async function runGetFilms(f: FilmFilters, fuzzy: boolean) {
@@ -113,7 +132,7 @@ async function runGetFilms(f: FilmFilters, fuzzy: boolean) {
            string_agg(DISTINCT movie_format, ',') FILTER (WHERE movie_format <> '') AS formats,
            sum(GREATEST(coalesce(quantity, 0), 0))::float8 AS total_copies,
            max(movie_rate)  AS rate,
-           max(movie_class) AS movie_class,
+           max(${RCLASS}) AS movie_class,
            max(t.tmdb_id)      AS tmdb_id,
            max(t.media_type)   AS media_type,
            max(t.poster_path)  AS poster_path,
@@ -123,7 +142,7 @@ async function runGetFilms(f: FilmFilters, fuzzy: boolean) {
            max(t.vote_average) AS vote_average,
            count(DISTINCT ${CLEAN})::int AS variants
     FROM inventor i
-    LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
+    ${TJOIN}
     WHERE ${whereClause(f, fuzzy)}
     GROUP BY ${GKEY}
     ORDER BY ${orderClause(f, fuzzy)}
@@ -145,7 +164,7 @@ async function runCountFilms(f: FilmFilters, fuzzy: boolean) {
   const rows = await db.execute<{ n: number }>(sql`
     SELECT count(*) AS n FROM (
       SELECT 1 FROM inventor i
-      LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
+      ${TJOIN}
       WHERE ${whereClause(f, fuzzy)} GROUP BY ${GKEY}
     ) s
   `);
@@ -198,16 +217,15 @@ export type Category = { code: string; label: string; count: number };
 /** Store classes (director/genre taxonomy) with catalog counts. */
 export async function getCategories(minCount = 8, limit = 300): Promise<Category[]> {
   const rows = await db.execute<Category>(sql`
-    SELECT i.movie_class AS code,
-           coalesce(max(c.class_des), i.movie_class) AS label,
-           count(DISTINCT ${CLEAN}) AS count
-    FROM inventor i
-    LEFT JOIN class c ON c.class = i.movie_class
-    WHERE ${VALID} AND coalesce(i.movie_class, '') <> ''
-      AND i.movie_class NOT IN ('NEW', 'DVD', 'MIS')
-    GROUP BY i.movie_class
-    HAVING count(DISTINCT ${CLEAN}) >= ${minCount}
-    ORDER BY count(DISTINCT ${CLEAN}) DESC
+    SELECT x.code, coalesce(max(c.class_des), x.code) AS label, count(DISTINCT x.clean) AS count
+    FROM (
+      SELECT ${RCLASS} AS code, ${CLEAN} AS clean FROM inventor i WHERE ${VALID}
+    ) x
+    LEFT JOIN class c ON c.class = x.code
+    WHERE coalesce(x.code, '') <> '' AND x.code NOT IN ('NEW', 'DVD', 'MIS')
+    GROUP BY x.code
+    HAVING count(DISTINCT x.clean) >= ${minCount}
+    ORDER BY count(DISTINCT x.clean) DESC
     LIMIT ${limit}
   `);
   return (rows as unknown as Category[]).map((r) => ({
@@ -237,14 +255,14 @@ export async function getFilmsByCategory(code: string, limit = 20) {
     SELECT coalesce(max(t.tmdb_title), min(${CLEAN})) AS title,
            string_agg(DISTINCT movie_format, ',') FILTER (WHERE movie_format <> '') AS formats,
            sum(GREATEST(coalesce(quantity, 0), 0))::float8 AS total_copies,
-           max(movie_rate) AS rate, max(movie_class) AS movie_class,
+           max(movie_rate) AS rate, max(${RCLASS}) AS movie_class,
            max(t.tmdb_id) AS tmdb_id, max(t.media_type) AS media_type, max(t.poster_path) AS poster_path,
            max(t.release_year) AS release_year, max(t.genres) AS genres, max(t.director) AS director,
            max(t.vote_average) AS vote_average,
            count(DISTINCT ${CLEAN})::int AS variants
     FROM inventor i
-    LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
-    WHERE ${VALID} AND movie_class = ${code}
+    ${TJOIN}
+    WHERE ${VALID} AND ${RCLASS} = ${code}
     GROUP BY ${GKEY}
     ORDER BY (max(t.poster_path) IS NOT NULL) DESC, max(t.vote_average) DESC NULLS LAST, min(${CLEAN})
     LIMIT ${limit}
@@ -273,14 +291,14 @@ function detailSelect(whereExpr: ReturnType<typeof sql>, groupExpr: ReturnType<t
            string_agg(DISTINCT ${CLEAN}, ' · ') AS edition_titles,
            count(DISTINCT ${CLEAN})::int AS variants,
            sum(GREATEST(coalesce(quantity, 0), 0))::float8 AS total_copies,
-           max(movie_rate) AS rate, max(movie_class) AS movie_class,
+           max(movie_rate) AS rate, max(${RCLASS}) AS movie_class,
            max(t.tmdb_id) AS tmdb_id, max(t.media_type) AS media_type,
            max(t.poster_path) AS poster_path, max(t.backdrop_path) AS backdrop_path,
            max(t.release_year) AS release_year, max(t.genres) AS genres, max(t.director) AS director,
            max(t.top_cast) AS top_cast, max(t.overview) AS overview, max(t.vote_average) AS vote_average,
            max(t.extra_tmdb_ids) AS extra_tmdb_ids
     FROM inventor i
-    LEFT JOIN tmdb_cache t ON t.title = ${CLEAN}
+    ${TJOIN}
     WHERE ${VALID} AND ${whereExpr}
     GROUP BY ${groupExpr}
     LIMIT 1`;

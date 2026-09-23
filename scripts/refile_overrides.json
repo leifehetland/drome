@@ -1,0 +1,10 @@
+{
+  "_comment": "\"CODE|STORE TITLE\" -> section code to show it under, or null to keep it where the store shelved it. Takes priority over the automatic suggestion.",
+  "DL|DUNE": "DLY",
+  "DL|DUNE (LYNCH)": "DLY",
+  "JF|DIRECTED BY JOHN FORD": null,
+  "QT|FROM DUSK TILL DAWN": null,
+  "QT|PLANET TERROR": null,
+  "TH|THOUSAND FACES OF DUNJIA, THE": null,
+  "HARM|KIDS": null
+}

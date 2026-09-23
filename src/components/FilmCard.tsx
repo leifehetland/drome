@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FilmRow } from "@/db/queries";
-import { posterUrl } from "@/db/queries";
+import { posterUrl } from "@/lib/poster";
 
 function href(film: FilmRow) {
   return film.tmdb_id

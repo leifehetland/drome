@@ -1,0 +1,4 @@
+{
+  "_comment": "Section code -> TMDB director name(s). Use when auto-detection picks the wrong person or misses a section. An empty list [] marks a section as not a director section.",
+  "_example": ["Albert Maysles", "David Maysles"]
+}

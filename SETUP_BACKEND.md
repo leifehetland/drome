@@ -71,6 +71,34 @@ Set the TMDB credential to whichever your account gives you: `TMDB_READ_TOKEN`
 TMDB's public CDN, so no key is exposed to the browser. Re-run any time to pick up
 new inventory; already-matched titles are skipped.
 
+## Director sections (fixes wrong posters / wrong films in a section)
+
+`tmdb_match.mjs` matches on title alone, so reused titles can land on the wrong film
+(Soderbergh's SOLARIS showing Tarkovsky's). Some items are also filed under the wrong
+code in the POS data (Spielberg films under SS, the Soderbergh code, instead of SPI).
+`tmdb_section_match.mjs` fixes both for director sections:
+
+```bash
+# 1. tables (run BEFORE deploying the app code that reads them)
+psql "$DATABASE_URL" -f ../db_test/tmdb_section_match.sql
+
+# 2. match each director section against that director's TMDB filmography
+#    and write scripts/out/section_report.csv (items that aren't by that director)
+DATABASE_URL="..." TMDB_READ_TOKEN="..." node scripts/tmdb_section_match.mjs
+#   --section=WH,SS   limit matching to these codes
+
+# 3. review the report; "refile" rows are items whose real director has their own
+#    section. Apply them (display only; POS data is untouched):
+DATABASE_URL="..." TMDB_READ_TOKEN="..." node scripts/tmdb_section_match.mjs --apply
+```
+
+The app prefers a `tmdb_section_match` row over the generic `tmdb_cache` row, and shows
+re-filed items under `section_reassign.to_class`. If the script picks the wrong person
+for a section (or treats a genre section as a director), set it in
+`scripts/section_directors.json`. To undo a re-filing, delete its row from
+`section_reassign`. The report is also the list to give the store so they can fix the
+codes in their POS.
+
 ## Configure and run
 
 ```bash
